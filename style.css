@@ -912,8 +912,8 @@ input:required {
       .single-welcome-slide .welcome-text h2::after {
         position: absolute;
         content: "";
-        height: 23px;
-        width: 400px;
+        height: 10px;
+        width: 300px;
         top: 67px;
         right: 5px;
         z-index: -1;
