@@ -103,4 +103,4 @@ function updateCache(request, response) {
   return caches.open(CACHE).then(function (cache) {
     return cache.put(request, response);
   });
-} d
+}
