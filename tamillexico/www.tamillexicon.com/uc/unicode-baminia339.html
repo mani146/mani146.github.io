@@ -1,0 +1,260 @@
+<!DOCTYPE HTML>
+<html>
+
+<!-- Mirrored from www.tamillexicon.com/uc/unicode-bamini?layout=double by HTTrack Website Copier/3.x [XR&CO'2014], Mon, 15 Feb 2021 06:09:29 GMT -->
+<!-- Added by HTTrack --><meta http-equiv="content-type" content="text/html;charset=UTF-8" /><!-- /Added by HTTrack -->
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<title>Unicode to Bamini - UC - Tamil Unicode Converter</title>
+<link rel="icon" type="image/x-icon" href="favicon.ico">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--[if IE]>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+<![endif]-->
+<!--[if lt IE 9]>
+    <script src="https://tamillexicon.com/static/js/html5-init.js"></script>
+<![endif]-->
+<link rel="canonical" href="unicode-bamini.html" />
+<meta property="og:image" content="../../tamillexicon.com/static/uc/img/unicode-to-bamini-converter.jpg" />
+<meta property="og:image:secure_url" content="../../tamillexicon.com/static/uc/img/unicode-to-bamini-converter.jpg" />
+<meta property="og:image:type" content="image/jpeg" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="Unicode to Bamini converter" />
+<meta name="description" content="Tamil Unicode converter supports to convert the words or document into Unicode to Bamini. This appliction is user-friendly and the user can use very easily." />
+<link rel="stylesheet" type="text/css" href="../../tamillexicon.com/static/uc/css/uce67d.css?v=1.3">
+<script src="../../tamildi.com/assets/tl/uc/js/new-jet-engine.min.js"></script><script src="../../tamildi.com/assets/tl/uc/js/trans.minc924.js?v=1.0.6"></script><script type="text/javascript">
+    
+var jet = new JetDocument();
+jet(document).ready(function()
+{
+        var $text = jet("#doc-textarea"), $tmpText = jet("#tmp-text"), text;
+    jet("#covert").click(function()
+    {
+        $tmpText.val($text.val());
+        $text.val(ConvertToo('UniBamini', $tmpText.val()));
+    });
+    
+    jet("#source-text").keyup(function()
+    {
+        text = jet(this).val();
+        jet("#target-text").val(ConvertToo('UniBamini', text));
+    });
+        var navHandle = false;
+    jet("#menu-toggle").click(function(e)
+    {
+        if(!navHandle)
+        {
+            jet("#main-menu ul .item").css({display:'block'});
+            navHandle = true;
+        }
+        else
+        {
+            jet("#main-menu ul .item").css({display:'none'});
+            navHandle = false;
+        }
+        e.preventDefault();
+    });
+    
+    var tt = null;
+    jet(".action-bar .copy-btn").click(function(e)
+    {
+        var text= jet("#doc-textarea").val();
+        if(text)
+        {
+            var $btn = this;
+            CopyTextToClipboard(text, "doc-textarea").then(function()
+            {
+                jet($btn).html('Copied');
+                clearTimeout(tt);
+                tt = setTimeout(function()
+                {
+                    jet($btn).html('Copy Text');
+                    clearTimeout(tt);
+                }, 1500)
+                
+            });
+        }
+        e.preventDefault();
+    });
+});
+
+function CopyTextToClipboard(text, textareaID)
+{
+    var Error = null, Success = false, fallback = false;
+    var textArea = document.getElementById(textareaID);
+    var _fallback = function()
+    {
+        fallback = true;
+        
+        if(textArea != null)
+        {
+            textArea.focus();
+            textArea.select();
+
+            try
+            {
+              if(document.execCommand('copy'))
+              {
+                  Success = true;
+              }
+              else
+              {
+                  Error = 'Fallback: Copying text command was unsuccessful';
+              }
+            }
+            catch (err)
+            {
+              Error = 'Fallback: Oops, unable to copy'+ err;
+            }
+        }
+        else Error = 'Fallback: Oops, unable to copy';
+        
+    };
+    
+    var ToClipboard = function(text)
+    {
+      if(!navigator.clipboard) _fallback();
+    };
+    var callbacks = function(completeCallback, errorCallback)
+    {
+        if(typeof(completeCallback) == 'function' && Success) completeCallback.call(this);
+        else if(typeof(errorCallback) == 'function' && Error) errorCallback.call(this, Error);
+    }
+    
+    ToClipboard(text);
+    
+    return {
+        then: function(completeCallback, errorCallback)
+        {
+            if(fallback) callbacks(completeCallback, errorCallback);
+            else
+            {
+                navigator.clipboard.writeText(text).then(function()
+                {
+                    if(textArea)
+                    {
+                        textArea.focus();
+                        textArea.select();
+                    }
+                    Success = true;
+                    callbacks(completeCallback, null);
+                  //Error = 'Async: Copying to clipboard was successful!';
+                }, function(err) {
+                  Error = 'Async: Could not copy text: ' + err;
+                  callbacks(null, errorCallback);
+                });
+            }
+        }
+    };
+}
+(function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+(i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+})(window,document,'script','../../www.google-analytics.com/analytics.js','ga');
+
+ga('create', 'UA-21476007-4', 'tamillexicon.com');
+ga('send', 'pageview');
+var Copi = (function(d) {
+var copiObject, isReady = false; window.onload = function() {copiObject = document.getElementById('copiEmbed'); if(!copiObject) copiObject = document.getElementById('copiObject'); if(copiObject) if(copiObject.init() == 'v.tamil.lexicon.0.0.2') isReady = true; }
+this.getTextById = function(id) {if(isReady){var txt = document.getElementById(id).value, out = ''; if(txt && typeof(txt) == 'string')  out = txt; return out; }}
+this.button = function(swfSrc, elementID, width, height){ var SWFHTML = '<div class="copi-button"><object classid="clsid:D27CDB6E-AE6D-11cf-96B8-444553540000" width="' +  width + '" height="' +  height + '" id="copiObject" title="Copi"><param name="movie" value="' +  swfSrc + '"><param name="quality" value="high"><param name="wmode" value="opaque"><param name="swfversion" value="6.0.65.0"><param name="flashvars" value="elementID=' +  elementID + '"><!-- Next object tag is for non-IE browsers. So hide it from IE using IECC. --><!--[if !IE]>--><object type="application/x-shockwave-flash" data="' +  swfSrc + '" width="' +  width + '" height="' +  height + '" id="copiEmbed"><!--<![endif]--><param name="flashvars" value="elementID=' +  elementID + '"><param name="quality" value="high"><param name="wmode" value="opaque"><param name="swfversion" value="6.0.65.0"><!--[if !IE]>--></object><!--<![endif]--></object></div>';  document.write(SWFHTML);};  return this;})(document);
+</script>
+</head>
+<body>
+<div id="page">
+    <header id="page-head">
+        <div id="logo-left">
+            <a href="index.html" id="logo"><img src="../../tamillexicon.com/static/img/uc.png" height="72" alt="UC"></a>
+        </div>
+        <div id="top-ad" title="here: Google Ad">
+            <script async src="../../pagead2.googlesyndication.com/pagead/js/f.txt"></script>
+            <!-- gallery-small-one -->
+            <ins class="adsbygoogle"
+                 style="display:inline-block;width:468px;height:60px"
+                 data-ad-client="ca-pub-0665260369861404"
+                 data-ad-slot="4294452377"></ins>
+            <script>
+            (adsbygoogle = window.adsbygoogle || []).push({});
+            </script>
+        </div>
+        <div class="fix"></div>
+        <input type="checkbox" name="menu" id="nav-handler" hidden="">
+        <nav id="main-menu">
+            <label for="nav-handler">
+                <button id="menu-toggle" type="button">
+                    <span> </span>
+                    <span> </span>
+                    <span> </span>
+                </button>
+            </label>
+            <ul>
+            	<li><a href="index.html" title="Home Page"><span id="home-ico">&nbsp;</span></a></li>
+                <li class="item"><ul>
+                    <li><a href="romaniseda339.html?layout=double" title="Try Romanised">Romanised</a></li><li><a href="bamini-unicodea339.html?layout=double" title="Try Bamini &rArr; Unicode">Bamini &rArr; Unicode</a></li><li><a href="unicode-baminia339.html?layout=double" title="Try Unicode &rArr; Bamini" class="active">Unicode &rArr; Bamini</a></li><li><a href="tscii-unicodea339.html?layout=double" title="Try TSCII &rArr; Unicode">TSCII &rArr; Unicode</a></li><li><a href="google-inputa339.html?layout=double" title="Try Google input">Google input</a></li>                </ul>
+                </li>
+                <li class="item">
+                    <ul class="right">
+                        <li><a title="Contact us" href="https://www.tamillexicon.com/contact">Contact</a></li>
+                        <li><a href="help.html" title="for help" id="help" rel="help">?</a></li>
+                    </ul>
+                </li>
+            </ul>
+            <div id="layout-switch">
+                <a rel="nofollow" href="unicode-baminif488.html?layout=single" title="Mode: Single View" id="vsingle"><span></span></a>            </div>
+            <div class="fix"></div>
+        </nav>
+    </header>
+    <main>
+        <div id="doc-text">
+                        <h1>Unicode to Bamini</h1>
+            <form>
+                <textarea id="source-text" placeholder="Write here" class="texta"></textarea>
+                <textarea id="target-text" class="texta"></textarea>
+                <div class="action-bar">
+                    <div class="inner-control">
+                                        <button type="reset">Clear</button>
+
+                    <a href="#!" class="btn copy-btn white-btn">Copy Text</a>
+                    </div>
+                </div>
+            </form>
+                    </div>
+                <section>
+            <h2>Unicode to Bamini Font Converter</h2>
+            <p>This Font Converter supports to convert the fonts into Unicode to Bamini. This Font Converter is very easy and simple to use. The user requires to choose the source font to target font on the main menu. Then, the user needs to pastes the source text into the text box and press the convert button for the conversion. User does not require to download or install any extra software for this <a href="unicode-bamini.html">Unicode to Bamini</a> Conversation. User can simply copy the converted text by using the copy button and can able to share the copy text into email, <a href="https://www.blogger.com/">Blogger</a>, <a href="https://www.facebook.com/">Facebook</a>, and <a href="https://twitter.com/">Twitter</a>.</p>
+        </section>
+                <section>
+            <h2>Important of Tamil Unicode Converter</h2>
+            <p>Tamil Unicode Converter helps the users to easily type the Tamil text or document in the web pages. This Tamil Unicode converter supports to convert the words or document into <a href="unicode-bamini.html">Unicode to Bamini</a>, <a href="bamini-unicode.html">Bamini to Unicode</a> and <a href="tscii-unicode.html">TSCII to Unicode</a>. This Unicode converter is clear and easy to use, and it converts the word or documents very fast.</p>
+        </section>
+        <section>
+            <h2>What is Tamil <a href="https://en.wikipedia.org/wiki/Unicode" title="Universal Coded Character Set">Unicode</a>?</h2>
+            <p>Tamil Unicode is one of the computer industry standards for the regular encoding, representation, and help to reveal the Tamil text in the computer system. <a href="https://en.wikipedia.org/wiki/Tamil_(Unicode_block)">Tamil Unicode block</a> includes the characters of Tamil languages. The <a href="https://en.wikipedia.org/wiki/Tamil_language">Tamil language</a> is mostly used in <a href="https://en.wikipedia.org/wiki/India">India</a>, <a href="https://en.wikipedia.org/wiki/Sri_Lanka">Sri Lankan</a>, <a href="https://en.wikipedia.org/wiki/Singapore">Singapore</a>, and <a href="https://en.wikipedia.org/wiki/Malaysia">Malaysia</a>.</p>
+        </section>
+    </main>
+    <aside>
+        <h3>Other Tamil Unicode Converters</h3>
+        <nav class="sub-menu">
+            <ul>
+                <li><a href="tscii-unicode.html">TSCII &rArr; Unicode</a></li><li><a href="unicode-tscii.html">Unicode &rArr; TSCII</a></li><li><a href="anjal-unicode.html">Anjal &rArr; Unicode</a></li><li><a href="boomi-unicode.html">Boomi &rArr; Unicode</a></li><li><a href="bamini-unicode.html">Bamini &rArr; Unicode</a></li><li><a href="unicode-bamini.html"><b>Unicode &rArr; Bamini</b></a></li></ul><ul><li><a href="dinakaran-unicode.html">Dinakaran &rArr; Unicode</a></li><li><a href="dinamani-unicode.html">Dinamani &rArr; Unicode</a></li><li><a href="indoweb-unicode.html">Indoweb &rArr; Unicode</a></li><li><a href="koeln-unicode.html">Koeln &rArr; Unicode</a></li><li><a href="murasoli-unicode.html">Murasoli &rArr; Unicode</a></li><li><a href="mylai-unicode.html">Mylai &rArr; Unicode</a></li></ul><ul><li><a href="tab-unicode.html">Tab &rArr; Unicode</a></li><li><a href="unicode-tab.html">Unicode &rArr; Tab</a></li><li><a href="tam-unicode.html">Tam &rArr; Unicode</a></li><li><a href="thanthy-unicode.html">Thanthy &rArr; Unicode</a></li><li><a href="libi-unicode.html">Libi &rArr; Unicode</a></li><li><a href="oldvikatan-unicode.html">Oldvikatan &rArr; Unicode</a></li></ul><ul><li><a href="webulagam-unicode.html">Webulagam &rArr; Unicode</a></li><li><a href="pallavar-unicode.html">Pallavar &rArr; Unicode</a></li><li><a href="romanised.html">Romanised</a></li><li><a href="keyman-unicode.html">Keyman &rArr; Unicode</a></li><li><a href="unicode-keyman.html">Unicode &rArr; Keyman</a></li><li><a href="senthamizh-unicode.html">Senthamizh &rArr; Unicode</a></li></ul><ul>            </ul>
+            <div class="fix"></div>
+        </nav>
+    </aside>
+    <footer id="footer">
+        <nav id="soc-media">
+            <ul>
+                <li><a id="sak" href="https://www.xn--vkc6a6bybjo5gn.com/" title="அகரமுதலி">&nbsp;</a></li>
+                <li><a id="scon" href="https://www.tamillexicon.com/contact" title="Contact us">&nbsp;</a></li>
+                <li><a id="sfb" href="http://www.facebook.com/tamillexicon" title="Facebook">&nbsp;</a></li>
+                <li><a id="stwi" href="https://twitter.com/tamillexicon" title="Twitter">&nbsp;</a></li>
+            </ul>
+            <div class="fix"></div>
+        </nav>
+    	<p>&copy; 2019 அகரமுதலி.</p>
+    </footer>
+</div>
+</body>
+
+<!-- Mirrored from www.tamillexicon.com/uc/unicode-bamini?layout=double by HTTrack Website Copier/3.x [XR&CO'2014], Mon, 15 Feb 2021 06:09:29 GMT -->
+</html>
