@@ -69,22 +69,13 @@ class Fusion_Product_Registration {
 	private $updater = null;
 
 	/**
-	 * An instance of the Fusion_Envato_API class.
+	 * Server API response as WP_Error object.
 	 *
 	 * @access private
-	 * @since 1.0.0
-	 * @var null|object Fusion_Envato_API.
-	 */
-	private $envato_api = null;
-
-	/**
-	 * Envato API response as WP_Error object.
-	 *
-	 * @access private
-	 * @since 1.7
+	 * @since 3.3
 	 * @var null|object WP_Error.
 	 */
-	private $envato_api_error = null;
+	private $errors = null;
 
 	/**
 	 * The class constructor.
@@ -108,6 +99,8 @@ class Fusion_Product_Registration {
 		if ( null === $this->updater ) {
 			$this->updater = new Fusion_Updater( $this );
 		}
+
+		add_action( 'wp_ajax_avada_product_registration', [ $this, 'ajax_check_registration' ] );
 	}
 
 	/**
@@ -154,18 +147,24 @@ class Fusion_Product_Registration {
 	}
 
 	/**
-	 * Envato API class.
+	 * Checks if the product is part of the themes or plugins
+	 * purchased by the user belonging to the token.
 	 *
 	 * @access public
 	 * @since 1.0.0
-	 * @return Fusion_Envato_API
 	 */
-	public function envato_api() {
-
-		if ( null === $this->envato_api ) {
-			$this->envato_api = new Fusion_Envato_API( $this );
+	public function ajax_check_registration() {
+		if ( ! isset( $_POST['avada_product_reg'] ) || ! wp_verify_nonce( $_POST['avada_product_reg'], 'avada_product_reg_nonce' ) ) { // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
+			exit( 'Invalid request.' );
 		}
-		return $this->envato_api;
+
+		$this->check_registration();
+
+		ob_start();
+		$this->the_form();
+		$response = ob_get_clean();
+
+		exit( $response ); // phpcs:ignore WordPress.Security.EscapeOutput
 	}
 
 	/**
@@ -178,71 +177,372 @@ class Fusion_Product_Registration {
 	public function check_registration() {
 
 		// Sanity check. No need to do anything if we're not saving the form.
-		if ( isset( $_POST[ $this->option_name ] ) && isset( $_POST[ $this->option_name ][ $this->product_id ] ) && isset( $_POST['_wpnonce'] ) ) {
+		if ( ( isset( $_POST[ $this->option_name ] ) && isset( $_POST[ $this->option_name ][ $this->product_id ] ) || isset( $_POST['avada_unregister_product'] ) ) && isset( $_POST['_wpnonce'] ) ) {
+
+			// Reset saved errors.
+			$this->errors = null;
+
+			// Revoking or registering.
+			$revoke = isset( $_POST['avada_unregister_product'] ) && '1' === $_POST['avada_unregister_product'];
 
 			// Security check.
 			check_admin_referer( $this->option_name . '_' . $this->product_id );
 
-			// The new token.
-			$token = '';
-			if ( isset( $_POST[ $this->option_name ][ $this->product_id ]['token'] ) ) {
-				$token = sanitize_text_field( wp_unslash( $_POST[ $this->option_name ][ $this->product_id ]['token'] ) );
+			// No purchase code passed and we are not revoking.
+			if ( ! $revoke && ! isset( $_POST[ $this->option_name ][ $this->product_id ]['purchase_code'] ) ) {
+				return;
 			}
-			$token = wp_strip_all_tags( trim( $token ) );
+
+			if ( $revoke ) {
+				$purchase_code = $this->get_purchase_code();
+				$revoked       = $this->revoke_purchase_code( $purchase_code );
+
+				// Always revoke, regardless of response.
+				$valid         = false;
+				$purchase_code = '';
+				$this->registration_data[ $this->product_id ]['token'] = '';
+			} else {
+				$purchase_code = sanitize_text_field( wp_unslash( $_POST[ $this->option_name ][ $this->product_id ]['purchase_code'] ) );
+				$purchase_code = wp_strip_all_tags( trim( $purchase_code ) );
+				$valid         = $this->check_purchase( $purchase_code );
+			}
 
 			// Update saved product data.
-			$this->registration_data[ $this->product_id ]['token']    = $token;
-			$this->registration_data[ $this->product_id ]['is_valid'] = $this->product_exists( $token );
-			$this->registration_data[ $this->product_id ]['scopes']   = $this->envato_api()->get_token_scopes( $token );
+			$this->registration_data[ $this->product_id ]['purchase_code'] = $purchase_code;
+			$this->registration_data[ $this->product_id ]['is_valid']      = $valid;
+			$this->registration_data[ $this->product_id ]['errors']        = null !== $this->errors ? $this->errors : '';
 
-			update_option( $this->option_name, $this->registration_data );
+			$this->update_data();
+
+			// Refresh data for grace period.
+			delete_transient( 'avada_dashboard_data' );
 		}
 	}
 
 	/**
-	 * Checks if the product is part of the themes or plugins
-	 * purchased by the user belonging to the token.
+	 * Update data to database.
 	 *
-	 * @access private
-	 * @since 1.0.0
-	 * @param string $token A token to check.
-	 * @param int    $page  The page number if one is necessary.
+	 * @access public
+	 * @since 3.3
+	 * @return void
+	 */
+	public function update_data() {
+		$save_data = $this->registration_data;
+
+		// Filter out non-persistent error messages.
+		if ( isset( $save_data[ $this->product_id ]['errors'] ) && is_wp_error( $save_data[ $this->product_id ]['errors'] ) ) {
+			$error_code = $save_data[ $this->product_id ]['errors']->get_error_code();
+			if ( 400 === $error_code ) {
+				$save_data[ $this->product_id ]['errors'] = '';
+			}
+		} else {
+			$save_data[ $this->product_id ]['errors'] = '';
+		}
+
+		update_option( $this->option_name, $save_data );
+	}
+
+	/**
+	 * Update data to database, CLI version.
+	 *
+	 * @access public
+	 * @since 3.4
+	 * @param array $registration_data Registration data.
+	 * @return void
+	 */
+	public function cli_update_data( $registration_data ) {
+
+		// Early exit.
+		if ( empty( $registration_data ) || ! defined( 'WP_CLI' ) || ! WP_CLI ) {
+			return;
+		}
+
+		$save_data = $registration_data;
+
+		// Filter out non-persistent error messages.
+		if ( isset( $save_data['avada']['errors'] ) && is_wp_error( $save_data['avada']['errors'] ) ) {
+			$error_code = $save_data['avada']['errors']->get_error_code();
+			if ( 400 === $error_code ) {
+				$save_data['avada']['errors'] = '';
+			}
+		} else {
+			$save_data['avada']['errors'] = '';
+		}
+
+		update_option( $this->option_name, $save_data );
+	}
+
+	/**
+	 * Get errors property.
+	 *
+	 * @access public
+	 * @since 3.4
+	 * @return null|object
+	 */
+	public function get_errors() {
+		return $this->errors;
+	}
+
+	/**
+	 * Check if purchase code is valid.
+	 *
+	 * @access public
+	 * @since 3.3
+	 * @param string $purchase purchase code.
 	 * @return bool
 	 */
-	private function product_exists( $token = '', $page = '' ) {
-
-		if ( empty( $token ) && 32 !== strlen( $token ) ) {
+	public function check_purchase( $purchase = '' ) {
+		if ( '' === $purchase ) {
+			$this->errors = $this->get_error( 400, 'auth' );
+			return false;
+		}
+		if ( false === strpos( $purchase, '-' ) && 32 === strlen( $purchase ) ) {
+			$this->errors = $this->get_error( 401, 'token' );
+			return;
+		}
+		if ( 36 !== strlen( $purchase ) || 4 !== substr_count( $purchase, '-' ) ) {
+			$this->errors = $this->get_error( 401, 'auth' );
 			return false;
 		}
 
-		// Set the new token for the API call.
-		if ( '' !== $token ) {
-			$this->envato_api()->set_token( $token );
-		}
-		if ( 'theme' === $this->args['type'] ) {
-			$products = $this->envato_api()->themes( [], $page );
-		} elseif ( 'plugin' === $this->args['type'] ) {
-			$products = $this->envato_api()->plugins( [], $page );
-		}
+		$args     = [
+			'timeout'    => 60,
+			'user-agent' => 'fusion-purchase-code',
+		];
+		$response = wp_remote_get( FUSION_UPDATES_URL . '/wp-json/avada-api/validate-code/' . $purchase, $args );
 
-		if ( is_wp_error( $products ) ) {
-			$this->envato_api_error = $products;
+		if ( is_wp_error( $response ) ) {
+			$this->errors = $response;
 			return false;
 		}
 
-		// Check iv product is part of the purchased themes/plugins.
-		foreach ( $products as $product ) {
-			if ( isset( $product['name'] ) ) {
-				if ( $this->args['name'] === $product['name'] ) {
-					return true;
+		$code = wp_remote_retrieve_response_code( $response );
+
+		if ( 399 < $code && 501 > $code ) {
+			$this->errors = $this->get_error( $code, 'auth' );
+			return false;
+		}
+		$response = isset( $response['body'] ) ? json_decode( $response['body'], true ) : false;
+		if ( true === $response ) {
+			return true;
+		}
+
+		$this->get_error( $code, 'auth' );
+		return false;
+	}
+
+	/**
+	 * Registration doesn't appear to be valid.
+	 *
+	 * @access public
+	 * @param object $error WordPress error object.
+	 * @return object
+	 * @since 3.3
+	 */
+	public function invalidate( $error = '' ) {
+		$this->registration_data[ $this->product_id ]['is_valid'] = false;
+		$this->registration_data[ $this->product_id ]['errors']   = $error;
+		$this->update_data();
+		return $error;
+	}
+
+	/**
+	 * Get error for code.
+	 *
+	 * @access public
+	 * @param int    $code HTTP code.
+	 * @param string $request Request type.
+	 * @return object WP error
+	 * @since 3.3
+	 */
+	public function get_error( $code = 403, $request = 'auth' ) {
+		$support_link = '<a href="https://theme-fusion.com/contact-us/">ThemeFusion</a>';
+
+		switch ( (int) $code ) {
+			// No code.
+			case 400:
+				if ( 'revoke' === $request ) {
+					return new WP_Error( $code, __( 'No purchase code was passed on to be revoked.', 'Avada' ) );
 				}
-			}
+				if ( 'prebuilt' === $request ) {
+					return new WP_Error( $code, __( 'In order to import a prebuilt website Avada must be registered. No purchase code was found.', 'Avada' ) );
+				}
+				return new WP_Error( $code, __( 'No purchase code was provided.', 'Avada' ) );
+
+			// No domain.
+			case 417:
+				if ( 'revoke' === $request ) {
+					return new WP_Error( $code, __( 'No domain was passed on and therefore revoke could not be confirmed.', 'Avada' ) );
+				}
+				if ( 'prebuilt' === $request ) {
+					return new WP_Error( $code, __( 'In order to import a prebuilt website Avada must be registered. No domain was passed on, therefore validation could not be confirmed.', 'Avada' ) );
+				}
+				return new WP_Error( $code, __( 'No domain was passed on in the request, this is needed to confirm registration.', 'Avada' ) );
+
+			// Invalid purchase code.
+			case 401:
+				if ( 'token' === $request ) {
+					return new WP_Error( $code, __( 'Invalid purchase code. Code provided appears to be a token instead.', 'Avada' ) );
+				}
+				if ( 'download' === $request ) {
+					return $this->invalidate( new WP_Error( $code, __( 'Invalid purchase code.', 'Avada' ) ) );
+				}
+				if ( 'prebuilt' === $request ) {
+					return $this->invalidate( new WP_Error( $code, __( 'In order to import a prebuilt website Avada must be registered. The purchase code being used does not seem to be valid.', 'Avada' ) ) );
+				}
+				return new WP_Error( $code, __( 'Invalid purchase code.', 'Avada' ) );
+
+			// Envato forbidden.
+			case 403:
+				return new WP_Error( $code, __( 'Envato API did not respond. Either the purchase code is incorrect or the API is temporarily unavailable.', 'Avada' ) );
+
+			// Domain mismatch.
+			case 409:
+				if ( 'download' === $request ) {
+					return $this->invalidate( new WP_Error( $code, __( 'The purchase code is already being used on another domain.', 'Avada' ) ) );
+				}
+				if ( 'revoke' === $request ) {
+					return new WP_Error( $code, __( 'The current domain does not match our records and therefore was not revoked.', 'Avada' ) );
+				}
+				if ( 'prebuilt' === $request ) {
+					return $this->invalidate( new WP_Error( $code, __( 'In order to import a prebuilt website Avada must be registered. The current domain does not match our records.', 'Avada' ) ) );
+				}
+				return new WP_Error( $code, __( 'The purchase code is already being used on another domain.', 'Avada' ) );
+
+			// Staging mismatch.
+			case 412:
+				if ( 'download' === $request ) {
+					return $this->invalidate( new WP_Error( $code, __( 'The purchase code is already being used on another staging domain.', 'Avada' ) ) );
+				}
+				if ( 'prebuilt' === $request ) {
+					return $this->invalidate( new WP_Error( $code, __( 'In order to import a prebuilt website Avada must be registered. The current staging domain does not match our records.', 'Avada' ) ) );
+				}
+				return new WP_Error( $code, __( 'The purchase code is already being used on another staging domain.', 'Avada' ) );
+
+			// Purchase code locked.
+			case 423:
+				/* translators: "ThemeFusion" contact link. */
+				return $this->invalidate( new WP_Error( $code, sprintf( __( 'This purchase code has been locked, as it was used in a manner that violates our license terms. Please contact %s to resolve.', 'Avada' ), $support_link ) ) );
+
+			// Envato API limited.
+			case 429:
+				return new WP_Error( $code, __( 'Sorry, the API is currently overloaded. Please try again later.', 'Avada' ) );
+
+			// Too many registrations.
+			case 406:
+				/* translators: "ThemeFusion" contact link. */
+				return new WP_Error( $code, sprintf( __( 'The purchase code has been registered too many times. Please contact %s to resolve.', 'Avada' ), $support_link ) );
 		}
 
-		if ( 100 === count( $products ) ) {
-			$page = ( ! $page ) ? 2 : $page + 1;
-			return $this->product_exists( '', $page );
+		return new WP_Error( $code, __( 'Unknown error encountered. Please try again later.', 'Avada' ) );
+	}
+
+	/**
+	 * Bypass active or not.
+	 *
+	 * @access public
+	 * @since 3.3
+	 */
+	public function bypass_active() {
+		$data = Avada::get_data();
+		if ( isset( $data['bypass_active'] ) && $data['bypass_active'] ) {
+			return true;
 		}
+		return false;
+	}
+
+	/**
+	 * Whether user should see restricted UI or not.
+	 *
+	 * @access public
+	 * @param string $type section type.
+	 * @since 3.3
+	 */
+	public function should_show( $type = 'plugins' ) {
+		return $this->is_registered() || $this->legacy_support() || $this->bypass_active();
+	}
+
+	/**
+	 * Reset token because its invalid.
+	 *
+	 * @access public
+	 * @since 3.3
+	 */
+	public function reset_token() {
+		$this->registration_data[ $this->product_id ]['token'] = '';
+		$this->update_data();
+	}
+
+	/**
+	 * Revoke purchase code.
+	 *
+	 * @access public
+	 * @param string $purchase Purchase code to revoke.
+	 * @since 3.3
+	 */
+	public function revoke_purchase_code( $purchase = '' ) {
+		$args     = [
+			'timeout'    => 60,
+			'user-agent' => 'fusion-purchase-code',
+		];
+		$response = wp_remote_get( FUSION_UPDATES_URL . '/wp-json/avada-api/revoke-code/' . $purchase, $args );
+
+		if ( is_wp_error( $response ) ) {
+			$this->errors = $response;
+			return false;
+		}
+
+		$code = wp_remote_retrieve_response_code( $response );
+		if ( 399 < $code && 501 > $code ) {
+			$this->errors = $this->get_error( $code, 'revoke' );
+			return false;
+		}
+		$response = isset( $response['body'] ) ? json_decode( $response['body'], true ) : false;
+		if ( true === $response ) {
+			return true;
+		}
+
+		$this->get_error( $code, 'revoke' );
+		return false;
+	}
+
+	/**
+	 * Check if updates can be served in grace period.
+	 *
+	 * @access public
+	 * @since 1.9.2
+	 * @param string $product_id The plugin/theme ID.
+	 * @return bool
+	 */
+	public function legacy_support( $product_id = '' ) {
+		if ( ! $product_id ) {
+			$product_id = $this->product_id;
+		}
+
+		if ( ! isset( $this->registration_data[ $product_id ] ) ) {
+			return false;
+		}
+
+		// No token, need to register.
+		if ( '' === $this->get_token() ) {
+			return false;
+		}
+
+		$data = Avada::get_data();
+
+		// Token and no grace set, must be first plugin update.
+		if ( ! isset( $data['legacy_end'] ) || '' === $data['legacy_end'] ) {
+			return true;
+		}
+
+		// Current time is before end date, grace is valid.
+		$current    = new DateTime( gmdate( 'D, d M Y H:i' ) );
+		$legacy_end = new DateTime( gmdate( 'D, d M Y H:i', $data['legacy_end'] ) );
+		if ( $current < $legacy_end ) {
+			return true;
+		}
+
+		// Grace has ended.
 		return false;
 	}
 
@@ -262,27 +562,24 @@ class Fusion_Product_Registration {
 			'purchase_code' => '',
 			'is_valid'      => 'false',
 			'scopes'        => [],
+			'errors'        => '',
 		];
 
 		foreach ( $registration_data_stored as $product => $data ) {
 			$registration_data[ $product ] = wp_parse_args( $data, $registration_data_dummy );
 		}
 
+		// No data at all, set it to dummy data.
+		if ( ! isset( $registration_data[ $this->product_id ] ) ) {
+			$registration_data[ $this->product_id ] = $registration_data_dummy;
+		}
+
+		// if we have stored errors, set them to display.
+		if ( isset( $registration_data[ $this->product_id ]['errors'] ) && '' !== $registration_data[ $this->product_id ]['errors'] ) {
+			$this->errors = $registration_data[ $this->product_id ]['errors'];
+		}
+
 		$this->registration_data = $registration_data;
-	}
-
-
-
-	/**
-	 * Get all available registration data.
-	 *
-	 * @access public
-	 * @since 1.9.2
-	 * @return array The registration data.
-	 */
-	public function get_registration_data() {
-
-		return $this->registration_data;
 	}
 
 	/**
@@ -298,12 +595,42 @@ class Fusion_Product_Registration {
 			$product_id = $this->product_id;
 		}
 
+		if ( ! isset( $this->registration_data[ $product_id ] ) ) {
+			return false;
+		}
+
+		if ( '' === $this->registration_data[ $product_id ]['purchase_code'] ) {
+			return false;
+		}
+
 		// Is the product registered?
-		if ( isset( $this->registration_data[ $product_id ] ) && true === $this->registration_data[ $product_id ]['is_valid'] ) {
+		if ( true === $this->registration_data[ $product_id ]['is_valid'] ) {
 			return true;
 		}
 
 		return false;
+	}
+
+	/**
+	 * Legacy update and builder has not been updated yet.
+	 *
+	 * @access public
+	 * @since 1.0.0
+	 * @return boolean
+	 */
+	public function is_legacy_update() {
+		return '' !== $this->get_token() && defined( 'FUSION_BUILDER_VERSION' ) && version_compare( FUSION_BUILDER_VERSION, '3.3', '<' );
+	}
+
+	/**
+	 * If it should appear as if registered.
+	 *
+	 * @access public
+	 * @since 1.0.0
+	 * @return boolean
+	 */
+	public function appear_registered() {
+		return $this->is_registered() || $this->is_legacy_update();
 	}
 
 	/**
@@ -327,20 +654,20 @@ class Fusion_Product_Registration {
 	}
 
 	/**
-	 * Returns the stored purchase key for the product.
+	 * Returns the purchase code
 	 *
 	 * @access public
-	 * @since 1.9.2
+	 * @since 3.3
 	 * @param string $product_id The product-ID.
 	 * @return string The current token.
 	 */
-	public function get_purchase_key( $product_id = '' ) {
+	public function get_purchase_code( $product_id = '' ) {
 		if ( '' === $product_id ) {
 			$product_id = $this->product_id;
 		}
 
 		if ( isset( $this->registration_data[ $product_id ] ) ) {
-			return $this->registration_data[ $product_id ]['purchase_key'];
+			return $this->registration_data[ $product_id ]['purchase_code'];
 		}
 
 		return '';
@@ -355,228 +682,125 @@ class Fusion_Product_Registration {
 	 */
 	public function the_form() {
 
-		// Print styles.
-		$this->form_styles();
-
-		// No need to display anything if this is a bundled product.
-		// TODO: Please note another implementation a few lines below.
-		if ( isset( self::$bundled[ $this->product_id ] ) ) {
-			return;
-		}
-
-		// Check registration.
+		/**
+		 * Check registration. Now done in the admin class.
+		 *
 		$this->check_registration();
+		 */
 
 		// Get the stored token.
-		$token = $this->get_token();
+		$token         = $this->get_token();
+		$purchase_code = $this->get_purchase_code();
 
 		// Is the product registered?
-		$is_registered = $this->is_registered();
+		$is_registered = $this->appear_registered();
 		?>
-		<div class="fusion-library-important-notice registration-form-container">
-			<?php if ( $is_registered ) : ?>
-				<p class="about-description"><?php esc_html_e( 'Congratulations! Thank you for registering your product.', 'Avada' ); ?></p>
+		<h2 class="avada-db-reg-heading">
+			<?php if ( $purchase_code ) : ?>
+				<?php if ( $is_registered ) : ?>
+					<i class="fusiona-verified avada-db-reg-icon"></i>
+				<?php else : ?>
+					<i class="fusiona-cross avada-db-reg-icon"></i>
+				<?php endif; ?>
 			<?php else : ?>
-				<p class="about-description"><?php esc_html_e( 'Please enter your Envato token to complete registration.', 'Avada' ); ?></p>
+				<i class="fusiona-unlock avada-db-reg-icon"></i>
 			<?php endif; ?>
-			<div class="fusion-library-registration-form">
-				<form id="fusion-library_product_registration" method="post">
-					<?php $show_form = true; ?>
-					<?php if ( isset( self::$bundled[ $this->product_id ] ) ) : ?>
-						<?php if ( ! $token ) : ?>
-							<?php $show_form = false; ?>
-							<p style="width:100%;max-width:100%;">
-								<?php
-								printf(
-									/* translators: The product name and whether it's a theme or plugin. */
-									esc_html__( 'The %1$s %2$s is bundled in %3$s and no registration is required for it. Updates will be provided from %3$s. If however you have purchased %1$s separately and wish to enter a registration token for it in order to receive %2$s updates regardless of %3$s, please check this checkbox.', 'Avada' ),
-									esc_attr( $this->args['name'] ),
-									esc_attr( $this->args['type'] ),
-									esc_attr( self::$bundled[ $this->product_id ] )
-								);
-								?>
-								<input type="checkbox" id="reveal-registration-form" />
-								<script>
-								jQuery( document ).ready( function() {
-									jQuery( '#reveal-registration-form' ).on( 'click', function() {
-										jQuery( '.toggle-hidden' ).toggleClass( 'hidden' );
-									} );
-								});
-								</script>
-							</p>
-						<?php endif; ?>
-					<?php endif; ?>
-
-					<?php if ( $token ) : ?>
-						<?php if ( $is_registered ) : ?>
-							<span class="dashicons dashicons-yes fusion-library-icon-key<?php echo ( ! $show_form ) ? ' toggle-hidden hidden' : ''; ?>"></span>
-						<?php else : ?>
-							<span class="dashicons dashicons-no fusion-library-icon-key<?php echo ( ! $show_form ) ? ' toggle-hidden hidden' : ''; ?>"></span>
-						<?php endif; ?>
-					<?php else : ?>
-						<span class="dashicons dashicons-admin-network fusion-library-icon-key<?php echo ( ! $show_form ) ? ' toggle-hidden hidden' : ''; ?>"></span>
-					<?php endif; ?>
-					<input <?php echo ( ! $show_form ) ? 'class="toggle-hidden hidden" ' : ''; ?>type="text" name="<?php echo esc_attr( "{$this->option_name}[{$this->product_id}][token]" ); ?>" value="<?php echo esc_attr( $token ); ?>" />
-					<?php wp_nonce_field( $this->option_name . '_' . $this->product_id ); ?>
+			<?php if ( ! $is_registered ) : ?>
+				<span class="avada-db-reg-heading-text"><?php esc_html_e( 'Register Your Website', 'Avada' ); ?></span>
+			<?php else : ?>
+				<span class="avada-db-reg-heading-text"><?php esc_html_e( 'Your Website is Registered', 'Avada' ); ?></span>
+			<?php endif; ?>
+			<span class="avada-db-card-heading-badge avada-db-card-heading-badge-howto">
+				<i class="fusiona-help-outlined"></i>
+				<span class="avada-db-card-heading-badge-text"><?php esc_html_e( 'How To?', 'Avada' ); ?></span>
+			</span>
+		</h2>
+		<div class="avada-db-reg-form-container">
+			<?php if ( $is_registered ) : ?>
+				<p class="avada-db-reg-text">
 					<?php
-					$button_classes = [ 'primary', 'large', 'fusion-library-large-button', 'fusion-library-register' ];
-					if ( ! $show_form ) {
-						$button_classes[] = 'toggle-hidden';
-						$button_classes[] = 'hidden';
+						/* translators: Link. */
+						printf( __( 'Congratulations, and thank you for registering your website. To manage your licenses, sign up on %s.', 'Avada' ), '<a href="https://theme-fusion.com/support/account/" target="_blank">theme-fusion.com</a>' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+					?>
+				</p>
+			<?php else : ?>
+				<p class="avada-db-reg-text"><?php esc_html_e( 'Please enter your Avada purchase code and get access to our prebuilt websites, auto-updates, and premium plugins. The purchase code and site URL will be sent to a ThemeFusion server located in the U.S. to verify the purchase.', 'Avada' ); ?></p>
+			<?php endif; ?>
+
+			<form class="avada-db-reg-form" method="post">
+				<div class="avada-db-reg-input-wrapper">
+					<div class="avada-db-reg-loader"><span class="avada-db-loader"></span></div>
+					<i class="fusiona-key avada-db-reg-input-icon"></i>
+					<?php
+						$disabled = '';
+
+					if ( $is_registered ) {
+						$code_length   = strlen( $purchase_code ) / 2;
+						$purchase_code = substr( $purchase_code, 0, $code_length ) . str_repeat( '*', $code_length );
+						$disabled      = ' ';
 					}
 					?>
-					<?php submit_button( esc_html__( 'Submit', 'Avada' ), $button_classes ); ?>
-				</form>
-
-				<?php if ( $token && ! $is_registered ) : ?>
-					<p class="error-invalid-token">
-						<?php if ( 36 === strlen( $token ) && 4 === substr_count( $token, '-' ) ) : ?>
-							<?php esc_html_e( 'Registration could not be completed because the value entered above is a purchase code. A token key is needed to register. Please read the directions below to find out how to create a token key to complete registration.', 'Avada' ); ?>
-						<?php elseif ( $this->envato_api_error ) : ?>
-							<?php $error_code = $this->envato_api_error->get_error_code(); ?>
-							<?php $error_message = str_replace( [ 'Unauthorized', 'Forbidden' ], '', $this->envato_api_error->get_error_message() ); ?>
-							<?php /* translators: The server error code and the error message. */ ?>
-							<?php printf( esc_html__( 'Invalid token, the server responded with code %1$s.%2$s', 'Avada' ), esc_html( $error_code ), esc_html( $error_message ) ); ?>
-						<?php else : ?>
-							<?php /* translators: The product name for the license. */ ?>
-							<?php printf( esc_html__( 'Invalid token, or corresponding Envato account does not have %s purchased.', 'Avada' ), esc_html( $this->args['name'] ) ); ?>
-						<?php endif; ?>
-					</p>
-				<?php elseif ( $token ) : ?>
-					<?php $scopes_ok = $this->envato_api()->check_token_scopes( $this->registration_data[ $this->product_id ]['scopes'] ); ?>
-					<?php if ( ! $scopes_ok ) : ?>
-						<p class="error-invalid-token">
-							<?php _e( 'Token does not have the necessary permissions. Please create a new token and make sure the following permissions are enabled for it: <strong>View Your Envato Account Username</strong>, <strong>Download Your Purchased Items</strong>, <strong>List Purchases You\'ve Made</strong>, <strong>Verify Purchases You\'ve Made</strong>.', 'Avada' ); // phpcs:ignore WordPress.Security.EscapeOutput ?>
-						</p>
-					<?php endif; ?>
+					<input type="text" class="avada-db-registration-input" name="<?php echo esc_attr( "{$this->option_name}[{$this->product_id}][purchase_code]" ); ?>" value="<?php echo esc_attr( $purchase_code ); ?>"<?php echo esc_attr( $disabled ); ?> />
+				</div>
+				<?php $reg_button_text = __( 'Register Now', 'Avada' ); ?>
+				<?php if ( $is_registered ) : ?>
+					<?php $reg_button_text = __( 'Unregister', 'Avada' ); ?>
+					<input type="hidden" name="avada_unregister_product" value="1">
 				<?php endif; ?>
-
-				<?php if ( ! $is_registered ) : ?>
-
-					<div <?php echo ( ! $show_form ) ? 'class="toggle-hidden hidden" ' : ''; ?>style="font-size:17px;line-height:27px;margin-top:1em;padding-top:1em">
-						<hr>
-
-						<h3><?php esc_html_e( 'Instructions For Generating A Token', 'Avada' ); ?></h3>
-						<ol>
-							<li>
-								<?php
-								printf(
-									/* translators: "Generate A Personal Token" link. */
-									__( 'Click on this %1$s link. <strong>IMPORTANT:</strong> You must be logged into the same Themeforest account that purchased %2$s. If you are logged in already, look in the top menu bar to ensure it is the right account. If you are not logged in, you will be directed to login then directed back to the Create A Token Page.', 'Avada' ), // phpcs:ignore WordPress.Security.EscapeOutput
-									'<a href="https://build.envato.com/create-token/?user:username=t&purchase:download=t&purchase:verify=t&purchase:list=t" target="_blank">' . esc_html__( 'Generate A Personal Token', 'Avada' ) . '</a>',
-									esc_html( $this->args['name'] )
-								);
-								?>
-							</li>
-							<li>
-								<?php
-								_e( 'Enter a name for your token, then check the boxes for <strong>View Your Envato Account Username, Download Your Purchased Items, List Purchases You\'ve Made</strong> and <strong>Verify Purchases You\'ve Made</strong> from the permissions needed section. Check the box to agree to the terms and conditions, then click the <strong>Create Token button</strong>', 'Avada' ); // phpcs:ignore WordPress.Security.EscapeOutput
-								?>
-							</li>
-							<li>
-								<?php
-								_e( 'A new page will load with a token number in a box. Copy the token number then come back to this registration page and paste it into the field below and click the <strong>Submit</strong> button.', 'Avada' ); // phpcs:ignore WordPress.Security.EscapeOutput
-								?>
-							</li>
-							<li>
-								<?php
-								printf(
-									/* translators: "documentation post" link. */
-									esc_html__( 'You will see a green check mark for success, or a failure message if something went wrong. If it failed, please make sure you followed the steps above correctly. You can also view our %s for various fallback methods.', 'Avada' ),
-									'<a href="https://theme-fusion.com/documentation/avada/getting-started/how-to-register-your-purchase/" target="_blank">' . esc_html__( 'documentation post', 'Avada' ) . '</a>'
-								);
-								?>
-							</li>
-						</ol>
-
-					</div>
-
+				<?php if ( isset( $_GET['no_ajax_reg'] ) && '1' === $_GET['no_ajax_reg'] ) : // phpcs:ignore WordPress.Security.NonceVerification ?>
+					<input type="hidden" name="no_ajax_reg" value="1">
 				<?php endif; ?>
+				<input type="hidden" name="action" value="avada_product_registration">
+				<?php wp_nonce_field( $this->option_name . '_' . $this->product_id ); ?>
+				<?php wp_nonce_field( 'avada_product_reg_nonce', 'avada_product_reg' ); ?>
+				<?php submit_button( esc_html( $reg_button_text ), 'primary avada-db-reg-button', 'submit', false ); ?>
+			</form>
+
+			<?php if ( $this->errors ) : ?>
+				<div class="avada-db-card-error">
+					<?php echo $this->errors->get_error_message(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+				</div>
+			<?php endif; ?>
+
+			<div class="avada-db-reg-howto">
+				<h3 class="avada-db-reg-howto-heading"><?php esc_html_e( 'How To Find Your Purchase Code', 'Avada' ); ?></h3>
+				<ol class="avada-db-reg-howto-list avada-db-card-text-small">
+					<li>
+						<?php
+						printf(
+							/* translators: "ThemeForest sign in link" link. */
+							__( 'Sign in to your %s. <strong>IMPORTANT:</strong> You must be signed into the same ThemeForest account that purchased Avada. If you are signed in already, look in the top menu bar to ensure it is the right account.', 'Avada' ), // phpcs:ignore WordPress.Security.EscapeOutput
+							'<a href="https://themeforest.net/sign_in" target="_blank">' . esc_html__( 'ThemeForest account', 'Avada' ) . '</a>'
+						);
+						?>
+					</li>
+					<li>
+						<?php
+						printf(
+							/* translators: "Generate A Personal Token" link. */
+							__( 'Visit the %s. You should see a row for Avada.  If you don\'t, please re-check step 1 that you are on the correct account.', 'Avada' ), // phpcs:ignore WordPress.Security.EscapeOutput
+							'<a href="https://themeforest.net/downloads" target="_blank">' . esc_html__( 'ThemeForest downloads page', 'Avada' ) . '</a>'
+						);
+						?>
+					</li>
+					<li>
+						<?php
+							esc_html_e( 'Click the download button in the Avada row.', 'Avada' )
+						?>
+					</li>
+					<li>
+						<?php
+							esc_html_e( 'Select either License certificate & purchase code (PDF) or License certificate & purchase code (text). This should then download either a text or PDF file.', 'Avada' )
+						?>
+					</li>
+					<li>
+						<?php
+							esc_html_e( 'Open up that newly downloaded file and copy the Item Purchase Code.', 'Avada' )
+						?>
+					</li>
+				</ol>
 			</div>
 		</div>
-		<?php
-
-	}
-
-	/**
-	 * Print styles for the form.
-	 *
-	 * @access private
-	 * @since 1.0.0
-	 * @return void
-	 */
-	private function form_styles() {
-		?>
-		<style>
-		.registration-form-container {
-			float: left;
-			width: 95%;
-			margin-bottom: 0;
-		}
-		.fusion-library-important-notice {
-			padding: 30px;
-			background: #fff;
-			margin: 0 0 30px;
-		}
-		.dashicons.dashicons-admin-network.fusion-library-icon-key {
-			line-height: 30px;
-			height: 30px;
-			margin-right: 10px;
-			width: 30px;
-		}
-
-		#fusion-library_product_registration {
-			display: -webkit-flex;
-			display: -ms-flexbox;
-			display: flex;
-			flex-wrap: wrap;
-
-			-webkit-align-items: center;
-			-ms-align-items: center;
-			align-items: center;
-		}
-
-		.fusion-library-registration-form input[type="text"],
-		.fusion-library-registration-form input#submit {
-			margin: 0 1em;
-			padding: 10px 15px;
-			width: calc(100% - 2em - 180px);
-			height: 40px;
-		}
-
-		.fusion-library-registration-form input#submit {
-			margin: 0;
-			width: 150px;
-			line-height: 1;
-		}
-
-		#fusion-library_product_registration p.submit {
-			margin: 0;
-			padding: 0;
-		}
-
-		#fusion-library_product_registration .dashicons {
-			margin: 0;
-			color: #333333;
-			width: 30px;
-		}
-
-		#fusion-library_product_registration .dashicons-yes {
-			color: #43A047;
-		}
-
-		#fusion-library_product_registration .dashicons-no {
-			color:#c00;
-		}
-
-		.fusion-library-important-notice p.error-invalid-token {
-			margin: 1em 0 0 0;
-			padding:1em;
-			color:#fff;
-			background-color:#c00;
-			text-align:center;
-		}
-		</style>
 		<?php
 	}
 }

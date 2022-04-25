@@ -107,8 +107,8 @@ class Fusion_Envato_API {
 		$response = wp_remote_get( esc_url_raw( $url ), $args );
 
 		// Check the response code.
-		//$response_code    = wp_remote_retrieve_response_code( $response );
-		//$response_message = wp_remote_retrieve_response_message( $response );
+// 		$response_code    = wp_remote_retrieve_response_code( $response );
+// 		$response_message = wp_remote_retrieve_response_message( $response );
 
 		if ( empty( $response_code ) && is_wp_error( $response ) ) {
 			return $response;
